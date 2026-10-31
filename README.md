@@ -1,9 +1,9 @@
 # Claude Arcade
 
-A tiny arcade that lives in a Claude Code pane, so you can play **Tic-Tac-Toe
-while Claude works**. The board stays interactive during active tasks — clicks
-register and it redraws mid-turn — without using any Claude tokens (the AI runs
-locally). It coexists with other mods and keeps to its own pane.
+A tiny arcade that lives in a Claude Code pane, so you can play **Tic-Tac-Toe or
+Snake while Claude works**. Games stay interactive during active tasks — input
+registers and the pane redraws mid-turn — without using any Claude tokens
+(everything runs locally). It coexists with other mods and keeps to its own pane.
 
 ## Install
 
@@ -18,16 +18,26 @@ At a terminal Claude Code prompt:
 
 ## Play
 
-- `/arcade` — open the game. Click any cell to place your **X**; the AI plays **O**.
+**Tic-Tac-Toe** (`/arcade` or `/arcade ttt`)
+- Click any cell to place your **X**; the AI plays **O**.
 - The AI is near-perfect minimax but **slips occasionally**, so you can win now
   and then; play well and most games draw.
 - Mouse: click a cell, New Game, Theme, or Close.
+
+**Snake** (`/arcade snake`)
+- Click the board, then steer with **arrow keys** or **WASD** — even while Claude
+  works. `P` pauses, `N` starts a new game.
+- Eat the food to grow and score; the pace quickens as you go. Best score
+  persists across sessions.
+- Its own fixed retro look (neon-on-dark), separate from the TTT themes.
 
 ## Commands
 
 | Command | What it does |
 | --- | --- |
 | `/arcade` | Open the pane |
+| `/arcade ttt` | Switch the pane to Tic-Tac-Toe |
+| `/arcade snake` | Switch the pane to Snake |
 | `/arcade theme` | List themes and the current one |
 | `/arcade theme <id>` | Switch theme: `classic`, `halloween`, `diwali`, `holi`, `eid`, `christmas` |
 | `/arcade theme auto` | Pick the theme from a local festival calendar |
@@ -52,12 +62,15 @@ snowman). Switching themes preserves the game in progress and the score.
 - **Auto seasonal theme is off by default.** The festival dates in
   `hooks/festivals.ts` are approximate and should be kept up to date.
 - **Sound** uses macOS `afplay`; other platforms silently skip it.
-- Scores, theme, and preferences persist across sessions.
+- **Snake is terminal-only and keyboard-first.** Click the board once to give it
+  keyboard focus (so it never steals keys from a prompt or question dialog);
+  `Esc` releases focus — the pane closes via the × only.
+- Scores, best scores, theme, and preferences persist across sessions.
 
 ## Development
 
 ```
 claude plugin validate .      # manifest + hooks
-claude plugin test .          # unit tests (engine, AI, themes, sprites, font)
+claude plugin test .          # unit tests (TTT engine/AI, themes, sprites, font, Snake engine/loop/input)
 tsc -p .                      # type-check (after the mod has loaded once)
 ```

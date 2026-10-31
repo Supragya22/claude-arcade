@@ -22,6 +22,8 @@ const THEME_KEY = 'theme'
 const MOTION_KEY = 'motion'
 const SOUND_KEY = 'sound'
 const AUTO_KEY = 'themeAuto'
+const CURRENT_KEY = 'currentGame'
+const SNAKE_BEST_KEY = 'snakeBest'
 
 const game = atom({ plugin: 'arcade', key: 'game' } as const, newGame(), { shape: 'ttt-3' })
 const scores = atom({ plugin: 'arcade', key: 'scores' } as const, { x: 0, o: 0, draws: 0 }, {
@@ -32,9 +34,11 @@ const frame = atom({ plugin: 'arcade', key: 'frame' } as const, 0)
 const flash = atom({ plugin: 'arcade', key: 'flash' } as const, -1)
 const wipe = atom({ plugin: 'arcade', key: 'wipe' } as const, -1)
 const motion = atom({ plugin: 'arcade', key: 'motion' } as const, true)
-const sound = atom({ plugin: 'arcade', key: 'sound' } as const, false)
+const sound = atom({ plugin: 'arcade', key: 'sound' } as const, true)
 const themeAuto = atom({ plugin: 'arcade', key: 'themeAuto' } as const, true)
 const minimized = atom({ plugin: 'arcade', key: 'minimized' } as const, false)
+const currentGame = atom({ plugin: 'arcade', key: 'currentGame' } as const, 'ttt')
+const snakeBest = atom({ plugin: 'arcade', key: 'snakeBest' } as const, 0)
 
 // Module-scoped timers: a hot reload drops them, which is fine.
 let aiTimer: { cancel: () => void } | null = null
@@ -74,7 +78,7 @@ async function flashCell($: EngineInterface, cell: number): Promise<void> {
 
 async function playSfx(
   $: EngineInterface,
-  name: 'place' | 'win' | 'lose' | 'draw',
+  name: 'place' | 'win' | 'lose' | 'draw' | 'eat' | 'turn' | 'gameover',
 ): Promise<void> {
   if (!(await read($, sound))) return
   await $.audio.play({ asset: `sounds/${name}.wav` }).catch(() => undefined)
@@ -173,7 +177,8 @@ async function openPane($: EngineInterface): Promise<{ isPlaced: boolean; reason
     backgroundColor: 'transparent',
   })
   await update($, minimized, () => false)
-  if (await read($, motion)) startAnim($)
+  // Snake drives its own frame clock (the Client); only TTT needs the mascot loop.
+  if ((await read($, motion)) && (await read($, currentGame)) === 'ttt') startAnim($)
 
   return opened
 }
@@ -218,10 +223,12 @@ function mascotState(g: { status: string; winner: Cell }): MascotState {
 }
 
 const HELP = [
-  'Claude Arcade — Tic-Tac-Toe',
+  'Claude Arcade',
   '',
-  '/arcade              open the game',
-  '/arcade theme        list themes / current',
+  '/arcade              open the current game',
+  '/arcade snake        play Snake (arrows / WASD, P pause, N new)',
+  '/arcade ttt          play Tic-Tac-Toe',
+  '/arcade theme        list themes / current (Tic-Tac-Toe)',
   '/arcade theme <id>   switch (classic, halloween, diwali, holi, eid, christmas)',
   '/arcade theme auto   pick the theme by the festival calendar',
   '/arcade motion       toggle animations (reduced motion)',
@@ -229,20 +236,24 @@ const HELP = [
   '/arcade close        close the pane',
   '/arcade help         this help',
   '',
-  'You are X, the AI is O. Click a cell to play. N starts a new',
-  'game, T cycles the theme. The AI plays near-perfect minimax',
-  'but slips occasionally, so you can win now and then.',
+  'Tic-Tac-Toe: you are X, the AI is O. Click a cell to play.',
+  'The AI plays near-perfect minimax but slips occasionally, so',
+  'you can win now and then.',
   '',
-  'You can play while Claude works — clicks register and the',
-  'board redraws during active tasks (verified on this build).',
+  'Snake: click the board to give it the keyboard, then steer',
+  'with the arrow keys or WASD. P pauses, N starts a new game.',
+  'Escape hands the keyboard back. Terminal only.',
+  '',
+  'You can play while Claude works — input registers and the',
+  'board redraws during active tasks.',
 ].join('\n')
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'arcade',
-      description: 'Open Claude Arcade — Tic-Tac-Toe you can play beside Claude',
-      argumentHint: '[theme <id> | motion | sound | close | help]',
+      description: 'Open Claude Arcade — Tic-Tac-Toe or Snake you can play beside Claude',
+      argumentHint: '[snake | ttt | theme <id> | motion | sound | close | help]',
     })
 
     const storedScores = await $.store.get(SCORES_KEY)
@@ -255,6 +266,11 @@ export const register: Register = on => {
     if (typeof storedSound === 'boolean') await update($, sound, () => storedSound)
     const storedAuto = await $.store.get(AUTO_KEY)
     if (typeof storedAuto === 'boolean') await update($, themeAuto, () => storedAuto)
+    const storedCurrent = await $.store.get(CURRENT_KEY)
+    if (storedCurrent === 'ttt' || storedCurrent === 'snake')
+      await update($, currentGame, () => storedCurrent)
+    const storedBest = await $.store.get(SNAKE_BEST_KEY)
+    if (typeof storedBest === 'number') await update($, snakeBest, () => storedBest)
 
     // Auto-select the seasonal theme when enabled (manual choice still wins
     // next time the person picks one).
@@ -316,11 +332,28 @@ export const register: Register = on => {
       return { text: `Theme set to ${name}.` }
     }
 
+    if (arg === 'snake' || arg === 'ttt') {
+      await update($, currentGame, () => arg)
+      await $.store.set(CURRENT_KEY, arg)
+      const opened = await openPane($)
+      const name = arg === 'snake' ? 'Snake' : 'Tic-Tac-Toe'
+      return {
+        text: opened.isPlaced
+          ? arg === 'snake'
+            ? 'Snake opened. Click the board, then steer with arrows / WASD — even while Claude works.'
+            : 'Tic-Tac-Toe opened. Click a cell to play — even while Claude is working.'
+          : `${name} could not open: ${opened.reason ?? 'no room in this layout'}`,
+      }
+    }
+
     const opened = await openPane($)
+    const snake = (await read($, currentGame)) === 'snake'
 
     return {
       text: opened.isPlaced
-        ? 'Arcade opened. Click a cell to play — even while Claude is working.'
+        ? snake
+          ? 'Snake opened. Click the board, then steer with arrows / WASD — even while Claude works.'
+          : 'Arcade opened. Click a cell to play — even while Claude is working.'
         : `Arcade could not open: ${opened.reason ?? 'no room in this layout'}`,
     }
   })
@@ -336,6 +369,21 @@ export const register: Register = on => {
     }
 
     return result
+  }).catch(($, e, next) => next(e))
+
+  // Snake posts its best score here when a game ends; persist a new high.
+  on('ui.message', async ($, e, next) => {
+    if (e.element !== 'snake') return next(e)
+    const d = e.data && typeof e.data === 'object' ? (e.data as Record<string, unknown>) : null
+    const best = d && typeof d.best === 'number' ? d.best : null
+    if (best !== null && best > (await read($, snakeBest))) {
+      await update($, snakeBest, () => best)
+      await $.store.set(SNAKE_BEST_KEY, best)
+    }
+    const snd = d && typeof d.sound === 'string' ? d.sound : null
+    if (snd === 'eat' || snd === 'turn' || snd === 'gameover') await playSfx($, snd)
+
+    return next(e)
   }).catch(($, e, next) => next(e))
 
   // When minimised, show a one-line "hidden" hint above the prompt (composed
@@ -354,6 +402,27 @@ export const register: Register = on => {
   }).catch(($, e, next) => next(e))
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+    // Snake is a self-contained Client surface module: it owns its loop, input
+    // and drawing. The pane just places it and hands it the saved best score.
+    if ((await read($, currentGame)) === 'snake') {
+      const term = e.surface === 'terminal' ? $.ui.resolve(e) : null
+      if (!term?.Client) {
+        const { Box, Text } = $.ui.resolve(e)
+        return (
+          <Box paddingX={1}>
+            <Text>Snake runs in the terminal only.</Text>
+          </Box>
+        )
+      }
+      const { Box, Client } = term
+      const best = await read($, snakeBest)
+      return (
+        <Box flexDirection="column" flexGrow={1}>
+          <Client key="snake" module="./snake/client.tsx" props={{ best }} flexGrow={1} />
+        </Box>
+      )
+    }
+
     const { Box, Text, Button } = $.ui.resolve(e)
     const g = await read($, game)
     const sc = await read($, scores)

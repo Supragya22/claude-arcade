@@ -5,8 +5,8 @@
     {
       "name": "arcade",
       "source": "./",
-      "description": "Play Tic-Tac-Toe in a pane while Claude works — 6 seasonal themes, animated pixel-art mascots, unbeatable-but-fallible local AI.",
-      "version": "0.2.0"
+      "description": "Play Tic-Tac-Toe and Snake in a pane while Claude works — seasonal TTT themes with animated mascots, unbeatable-but-fallible local AI, and a real-time retro Snake.",
+      "version": "0.3.0"
     }
   ]
 }
