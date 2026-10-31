@@ -30,6 +30,7 @@ const scores = atom({ plugin: 'arcade', key: 'scores' } as const, { x: 0, o: 0, 
 const theme = atom({ plugin: 'arcade', key: 'theme' } as const, 'classic')
 const frame = atom({ plugin: 'arcade', key: 'frame' } as const, 0)
 const flash = atom({ plugin: 'arcade', key: 'flash' } as const, -1)
+const wipe = atom({ plugin: 'arcade', key: 'wipe' } as const, -1)
 const motion = atom({ plugin: 'arcade', key: 'motion' } as const, true)
 const sound = atom({ plugin: 'arcade', key: 'sound' } as const, false)
 const themeAuto = atom({ plugin: 'arcade', key: 'themeAuto' } as const, true)
@@ -39,6 +40,7 @@ const minimized = atom({ plugin: 'arcade', key: 'minimized' } as const, false)
 let aiTimer: { cancel: () => void } | null = null
 let animTimer: { cancel: () => void } | null = null
 let flashTimer: { cancel: () => void } | null = null
+let wipeTimer: { cancel: () => void } | null = null
 
 const clamp = (n: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, n))
 const isScores = (v: unknown): v is Scores =>
@@ -123,12 +125,37 @@ async function resetGame($: EngineInterface): Promise<void> {
   aiTimer?.cancel()
   aiTimer = null
   await update($, flash, () => -1)
-  await update($, game, () => newGame())
+  wipeTimer?.cancel()
+  wipeTimer = null
+
+  if (!(await read($, motion))) {
+    await update($, wipe, () => -1)
+    await update($, game, () => newGame())
+
+    return
+  }
+
+  // Sweep the old board away cell by cell, then deal a fresh one.
+  let k = 0
+  await update($, wipe, () => 0)
+  wipeTimer = $.clock.every(55, () => {
+    k += 1
+    if (k > 9) {
+      wipeTimer?.cancel()
+      wipeTimer = null
+      void update($, wipe, () => -1)
+      void update($, game, () => newGame())
+    } else {
+      void update($, wipe, () => k)
+    }
+  })
 }
 
 async function closePane($: EngineInterface): Promise<void> {
   aiTimer?.cancel()
   aiTimer = null
+  wipeTimer?.cancel()
+  wipeTimer = null
   stopAnim($)
   await $.ui.close({ id: PANE })
 }
@@ -333,6 +360,7 @@ export const register: Register = on => {
     const th = getTheme(await read($, theme))
     const f = await read($, frame)
     const flashed = await read($, flash)
+    const wiping = await read($, wipe)
     const motionOn = await read($, motion)
 
 
@@ -373,6 +401,17 @@ export const register: Register = on => {
 
     const cellOf = (i: number) => {
       const v: Cell = g.board[i] ?? null
+      // During the new-game sweep: cleared cells blank, the rest show their mark
+      // (no buttons), clearing left-to-right.
+      if (wiping >= 0) {
+        if (i < wiping || v === null) return <Text> </Text>
+        const wc = v === 'X' ? th.x : th.o
+        if (Raster) {
+          const r = spriteToRaster(v === 'X' ? X_GLYPH : O_GLYPH, { '.': null, '#': wc })
+          return <Box><Raster key={`m-${i}`} columns={r.columns} rows={r.rows} cells={r.cells} /></Box>
+        }
+        return <Box><Text bold color={wc}>{v}</Text></Box>
+      }
       if (v === null) {
         if (g.status !== 'play') return <Text> </Text>
         return (
@@ -392,11 +431,14 @@ export const register: Register = on => {
     const tileBg = (row: number, col: number): string =>
       (row + col) % 2 === 0 ? th.tileA : th.tileB
 
-    const confettiChars = ['*', '+', '·', '°', '.']
-    const confettiCols = [th.x, th.o, th.win, th.brand]
-    const confetti = Array.from({ length: boardW + 2 }, (_, i) => ({
-      ch: confettiChars[(i + f) % confettiChars.length] ?? '*',
-      color: confettiCols[(i + f * 2) % confettiCols.length] ?? th.brand,
+    // Win → colourful confetti; draw → a muted neutral shimmer.
+    const isDraw = g.status === 'draw'
+    const burstActive = motionOn && (g.status === 'win' || isDraw)
+    const burstChars = isDraw ? ['·', '.', '-'] : ['*', '+', '·', '°', '.']
+    const burstCols = isDraw ? [th.dim, '#8a93a7', '#6b7280'] : [th.x, th.o, th.win, th.brand]
+    const burst = Array.from({ length: boardW + 2 }, (_, i) => ({
+      ch: burstChars[(i + f) % burstChars.length] ?? '·',
+      color: burstCols[(i + f * 2) % burstCols.length] ?? th.dim,
     }))
 
     return (
@@ -410,9 +452,9 @@ export const register: Register = on => {
         <Box justifyContent="center">{mascot}</Box>
         <Text> </Text>
 
-        {g.status === 'win' && motionOn && (
+        {burstActive && (
           <Box justifyContent="center">
-            {confetti.map((c, i) => (
+            {burst.map((c, i) => (
               <Text key={`cf-${i}`} color={c.color}>{c.ch}</Text>
             ))}
           </Box>

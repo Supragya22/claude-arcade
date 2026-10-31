@@ -1,8 +1,9 @@
 {
   "name": "arcade",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Claude Arcade — play Tic-Tac-Toe in a pane while Claude works",
   "author": { "name": "Supragya" },
   "license": "MIT",
+  "icon": "./.claude-plugin/icon.png",
   "types": "./types/index.d.ts"
 }

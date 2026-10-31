@@ -20,6 +20,7 @@ declare module 'claude-code' {
       theme: string
       frame: number // animation tick driving the mascot + winning-line pulse
       flash: number // cell index briefly flashed on placement, or -1
+      wipe: number // new-game sweep progress (0..9), or -1 when idle
       motion: boolean // animations on (false = reduced motion)
       sound: boolean // sound effects on
       themeAuto: boolean // pick the theme from the festival calendar
