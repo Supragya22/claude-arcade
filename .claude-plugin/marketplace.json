@@ -1,0 +1,12 @@
+{
+  "name": "claude-arcade",
+  "owner": { "name": "Supragya22" },
+  "plugins": [
+    {
+      "name": "arcade",
+      "source": "./",
+      "description": "Play Tic-Tac-Toe in a pane while Claude works — 6 seasonal themes, animated pixel-art mascots, unbeatable-but-fallible local AI.",
+      "version": "0.1.0"
+    }
+  ]
+}
