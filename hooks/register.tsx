@@ -9,6 +9,7 @@ import { mascotFor, pickFrame, type MascotState } from './mascots.ts'
 import { spriteToRaster } from './sprite.ts'
 import { textToRaster } from './font.ts'
 import { festivalThemeFor } from './festivals.ts'
+import type { InvadersState } from './invaders/types.ts'
 
 const PANE = 'arcade'
 const PANE_ROWS = 36
@@ -24,6 +25,7 @@ const SOUND_KEY = 'sound'
 const AUTO_KEY = 'themeAuto'
 const CURRENT_KEY = 'currentGame'
 const SNAKE_BEST_KEY = 'snakeBest'
+const INVADERS_BEST_KEY = 'invadersBest'
 
 const game = atom({ plugin: 'arcade', key: 'game' } as const, newGame(), { shape: 'ttt-3' })
 const scores = atom({ plugin: 'arcade', key: 'scores' } as const, { x: 0, o: 0, draws: 0 }, {
@@ -39,12 +41,18 @@ const themeAuto = atom({ plugin: 'arcade', key: 'themeAuto' } as const, true)
 const minimized = atom({ plugin: 'arcade', key: 'minimized' } as const, false)
 const currentGame = atom({ plugin: 'arcade', key: 'currentGame' } as const, 'ttt')
 const snakeBest = atom({ plugin: 'arcade', key: 'snakeBest' } as const, 0)
+const invadersBest = atom({ plugin: 'arcade', key: 'invadersBest' } as const, 0)
 
 // Module-scoped timers: a hot reload drops them, which is fine.
 let aiTimer: { cancel: () => void } | null = null
 let animTimer: { cancel: () => void } | null = null
 let flashTimer: { cancel: () => void } | null = null
 let wipeTimer: { cancel: () => void } | null = null
+
+// The Invaders Client posts its game each frame; we keep the latest here so a
+// minimise (plugin close) can resume it paused. A person close (×) clears it,
+// so reopening starts fresh. Resets on hot reload, which is fine.
+let invadersSave: InvadersState | null = null
 
 const clamp = (n: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, n))
 const isScores = (v: unknown): v is Scores =>
@@ -78,7 +86,7 @@ async function flashCell($: EngineInterface, cell: number): Promise<void> {
 
 async function playSfx(
   $: EngineInterface,
-  name: 'place' | 'win' | 'lose' | 'draw' | 'eat' | 'turn' | 'gameover',
+  name: 'place' | 'win' | 'lose' | 'draw' | 'eat' | 'turn' | 'shoot' | 'explode' | 'ufo' | 'march' | 'gameover',
 ): Promise<void> {
   if (!(await read($, sound))) return
   await $.audio.play({ asset: `sounds/${name}.wav` }).catch(() => undefined)
@@ -227,6 +235,7 @@ const HELP = [
   '',
   '/arcade              open the current game',
   '/arcade snake        play Snake (arrows / WASD, P pause, N new)',
+  '/arcade invaders     play Space Invaders (← → / A D, Space fire, P, N)',
   '/arcade ttt          play Tic-Tac-Toe',
   '/arcade theme        list themes / current (Tic-Tac-Toe)',
   '/arcade theme <id>   switch (classic, halloween, diwali, holi, eid, christmas)',
@@ -244,6 +253,10 @@ const HELP = [
   'with the arrow keys or WASD. P pauses, N starts a new game.',
   'Escape hands the keyboard back. Terminal only.',
   '',
+  'Space Invaders: click the board, then move with ← → or A / D',
+  'and fire with Space. Clear each wave; you have three lives.',
+  'P pauses, N starts a new game. Terminal only.',
+  '',
   'You can play while Claude works — input registers and the',
   'board redraws during active tasks.',
 ].join('\n')
@@ -252,8 +265,8 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'arcade',
-      description: 'Open Claude Arcade — Tic-Tac-Toe or Snake you can play beside Claude',
-      argumentHint: '[snake | ttt | theme <id> | motion | sound | close | help]',
+      description: 'Open Claude Arcade — Tic-Tac-Toe, Snake or Space Invaders you can play beside Claude',
+      argumentHint: '[snake | invaders | ttt | theme <id> | motion | sound | close | help]',
     })
 
     const storedScores = await $.store.get(SCORES_KEY)
@@ -267,10 +280,12 @@ export const register: Register = on => {
     const storedAuto = await $.store.get(AUTO_KEY)
     if (typeof storedAuto === 'boolean') await update($, themeAuto, () => storedAuto)
     const storedCurrent = await $.store.get(CURRENT_KEY)
-    if (storedCurrent === 'ttt' || storedCurrent === 'snake')
+    if (storedCurrent === 'ttt' || storedCurrent === 'snake' || storedCurrent === 'invaders')
       await update($, currentGame, () => storedCurrent)
     const storedBest = await $.store.get(SNAKE_BEST_KEY)
     if (typeof storedBest === 'number') await update($, snakeBest, () => storedBest)
+    const storedInvBest = await $.store.get(INVADERS_BEST_KEY)
+    if (typeof storedInvBest === 'number') await update($, invadersBest, () => storedInvBest)
 
     // Auto-select the seasonal theme when enabled (manual choice still wins
     // next time the person picks one).
@@ -332,28 +347,41 @@ export const register: Register = on => {
       return { text: `Theme set to ${name}.` }
     }
 
-    if (arg === 'snake' || arg === 'ttt') {
+    const SNAKE_MSG =
+      'Snake opened. Click the board, then steer with arrows / WASD — even while Claude works.'
+    const INVADERS_MSG =
+      'Space Invaders opened. Click the board, then ← → / A D to move and Space to fire — even while Claude works.'
+
+    if (arg === 'snake' || arg === 'ttt' || arg === 'invaders') {
       await update($, currentGame, () => arg)
       await $.store.set(CURRENT_KEY, arg)
       const opened = await openPane($)
-      const name = arg === 'snake' ? 'Snake' : 'Tic-Tac-Toe'
+      const name = arg === 'snake' ? 'Snake' : arg === 'invaders' ? 'Space Invaders' : 'Tic-Tac-Toe'
+      const ready =
+        arg === 'snake'
+          ? SNAKE_MSG
+          : arg === 'invaders'
+            ? INVADERS_MSG
+            : 'Tic-Tac-Toe opened. Click a cell to play — even while Claude is working.'
       return {
         text: opened.isPlaced
-          ? arg === 'snake'
-            ? 'Snake opened. Click the board, then steer with arrows / WASD — even while Claude works.'
-            : 'Tic-Tac-Toe opened. Click a cell to play — even while Claude is working.'
+          ? ready
           : `${name} could not open: ${opened.reason ?? 'no room in this layout'}`,
       }
     }
 
     const opened = await openPane($)
-    const snake = (await read($, currentGame)) === 'snake'
+    const cur = await read($, currentGame)
+    const ready =
+      cur === 'snake'
+        ? SNAKE_MSG
+        : cur === 'invaders'
+          ? INVADERS_MSG
+          : 'Arcade opened. Click a cell to play — even while Claude is working.'
 
     return {
       text: opened.isPlaced
-        ? snake
-          ? 'Snake opened. Click the board, then steer with arrows / WASD — even while Claude works.'
-          : 'Arcade opened. Click a cell to play — even while Claude is working.'
+        ? ready
         : `Arcade could not open: ${opened.reason ?? 'no room in this layout'}`,
     }
   })
@@ -361,26 +389,41 @@ export const register: Register = on => {
   // Closing the pane (the × , the close key, or the Close button) resets the score.
   on('ui.close', { id: PANE }, async ($, e, next) => {
     const result = await next(e)
-    // Only a person-initiated close (the ×, close key) resets the score;
-    // minimise closes with origin `plugin` and keeps it.
+    // Only a person-initiated close (the ×, close key) resets; minimise closes
+    // with origin `plugin` and keeps the TTT score and the Invaders game.
     if (e.origin.kind === 'person') {
       await update($, scores, () => ({ x: 0, o: 0, draws: 0 }))
       await $.store.set(SCORES_KEY, { x: 0, o: 0, draws: 0 })
+      invadersSave = null // fresh Invaders game next open
     }
 
     return result
   }).catch(($, e, next) => next(e))
 
-  // Snake posts its best score here when a game ends; persist a new high.
+  // Snake and Invaders post their best score here; persist a new high. Both
+  // also post sound events the Client surface can't play itself.
   on('ui.message', async ($, e, next) => {
-    if (e.element !== 'snake') return next(e)
+    if (e.element !== 'snake' && e.element !== 'invaders') return next(e)
     const d = e.data && typeof e.data === 'object' ? (e.data as Record<string, unknown>) : null
     const best = d && typeof d.best === 'number' ? d.best : null
+    const snd = d && typeof d.sound === 'string' ? d.sound : null
+
+    if (e.element === 'invaders') {
+      if (d && typeof d.game === 'object' && d.game !== null) invadersSave = d.game as InvadersState
+      if (best !== null && best > (await read($, invadersBest))) {
+        await update($, invadersBest, () => best)
+        await $.store.set(INVADERS_BEST_KEY, best)
+      }
+      if (snd === 'shoot' || snd === 'explode' || snd === 'ufo' || snd === 'march' || snd === 'gameover') {
+        await playSfx($, snd)
+      }
+      return next(e)
+    }
+
     if (best !== null && best > (await read($, snakeBest))) {
       await update($, snakeBest, () => best)
       await $.store.set(SNAKE_BEST_KEY, best)
     }
-    const snd = d && typeof d.sound === 'string' ? d.sound : null
     if (snd === 'eat' || snd === 'turn' || snd === 'gameover') await playSfx($, snd)
 
     return next(e)
@@ -404,20 +447,43 @@ export const register: Register = on => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     // Snake is a self-contained Client surface module: it owns its loop, input
     // and drawing. The pane just places it and hands it the saved best score.
-    if ((await read($, currentGame)) === 'snake') {
+    const cur = await read($, currentGame)
+    if (cur === 'snake' || cur === 'invaders') {
       const term = e.surface === 'terminal' ? $.ui.resolve(e) : null
       if (!term?.Client) {
         const { Box, Text } = $.ui.resolve(e)
+        const nm = cur === 'invaders' ? 'Space Invaders' : 'Snake'
         return (
           <Box paddingX={1}>
-            <Text>Snake runs in the terminal only.</Text>
+            <Text>{nm} runs in the terminal only.</Text>
           </Box>
         )
       }
-      const { Box, Client } = term
+      // `module` must be a string literal (the validator reads it statically),
+      // so each game gets its own Client element.
+      const { Box, Button, Client } = term
+      // Minimise bar (like TTT): plugin-close keeps the game; the pane's × resets it.
+      const minBar = (
+        <Box key="minbar" justifyContent="flex-end">
+          <Button key="min" plain onPress={() => void minimizePane($)}>[-]</Button>
+        </Box>
+      )
+      if (cur === 'invaders') {
+        const best = await read($, invadersBest)
+        // Only include `save` when there is one — props may not hold `undefined`.
+        const invProps: { best: number; save?: InvadersState } = { best }
+        if (invadersSave) invProps.save = invadersSave
+        return (
+          <Box flexDirection="column" flexGrow={1}>
+            {minBar}
+            <Client key="invaders" module="./invaders/client.tsx" props={invProps} flexGrow={1} />
+          </Box>
+        )
+      }
       const best = await read($, snakeBest)
       return (
         <Box flexDirection="column" flexGrow={1}>
+          {minBar}
           <Client key="snake" module="./snake/client.tsx" props={{ best }} flexGrow={1} />
         </Box>
       )

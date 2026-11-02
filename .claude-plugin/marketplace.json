@@ -5,8 +5,8 @@
     {
       "name": "arcade",
       "source": "./",
-      "description": "Play Tic-Tac-Toe and Snake in a pane while Claude works — seasonal TTT themes with animated mascots, unbeatable-but-fallible local AI, and a real-time retro Snake.",
-      "version": "0.3.0"
+      "description": "Play Tic-Tac-Toe, Snake and Space Invaders in a pane while Claude works — seasonal TTT themes with animated mascots and local AI, real-time retro Snake, and Space Invaders with shields, a UFO, explosions and sound.",
+      "version": "0.4.0"
     }
   ]
 }

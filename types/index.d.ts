@@ -25,8 +25,9 @@ declare module 'claude-code' {
       sound: boolean // sound effects on
       themeAuto: boolean // pick the theme from the festival calendar
       minimized: boolean // pane collapsed to a compact bar
-      currentGame: string // which game the pane shows: 'ttt' | 'snake'
+      currentGame: string // which game the pane shows: 'ttt' | 'snake' | 'invaders'
       snakeBest: number // Snake high score, persisted across sessions
+      invadersBest: number // Space Invaders high score, persisted across sessions
     }
   }
 }
